@@ -256,6 +256,38 @@ def fit_surface_to_canvas(surface, canvas_size):
     return canvas
 
 
+def prepare_alpha_surface(surface, target_size, cleanup_scale=4):
+    """Chuẩn hóa sprite alpha theo kích thước đích với chi phí thấp hơn.
+
+    Các frame nguồn hiện rất lớn so với kích thước render cuối cùng.
+    Nếu cleanup trực tiếp trên ảnh gốc, startup sẽ bị treo hàng chục giây.
+    Vì sprite cuối chỉ hiển thị rất nhỏ, ta thu ảnh về cỡ làm việc gần target trước,
+    rồi mới cleanup/trim/final-fit.
+    """
+
+    target_w, target_h = target_size
+    if target_w <= 0 or target_h <= 0:
+        return surface.copy()
+
+    working_max_w = max(target_w * cleanup_scale, target_w)
+    working_max_h = max(target_h * cleanup_scale, target_h)
+    source_w, source_h = surface.get_size()
+
+    scale = min(1.0, working_max_w / max(1, source_w), working_max_h / max(1, source_h))
+    if scale < 1.0:
+        surface = pygame.transform.smoothscale(
+            surface,
+            (
+                max(1, round(source_w * scale)),
+                max(1, round(source_h * scale)),
+            ),
+        )
+
+    surface = cleanup_loose_frame_background(surface)
+    surface = trim_frame_surface(surface)
+    return fit_surface_to_canvas(surface, target_size)
+
+
 class AssetManager:
     """Quản lý asset của game.
 
@@ -356,9 +388,7 @@ class AssetManager:
         image = pygame.image.load(str(path))
         image = image.convert_alpha() if alpha else image.convert()
         if alpha:
-            image = cleanup_loose_frame_background(image)
-            image = trim_frame_surface(image)
-            return fit_surface_to_canvas(image, size)
+            return prepare_alpha_surface(image, size)
         return pygame.transform.smoothscale(image, size)
 
     def load_sprite_sheet(self, filename, columns, rows):
@@ -397,9 +427,7 @@ class AssetManager:
             frames = []
             for image_path in sorted(state_dir.glob("*.png")):
                 image = pygame.image.load(str(image_path)).convert_alpha()
-                image = cleanup_loose_frame_background(image)
-                image = trim_frame_surface(image)
-                image = fit_surface_to_canvas(image, size)
+                image = prepare_alpha_surface(image, size)
                 frames.append(image)
 
             if frames:
