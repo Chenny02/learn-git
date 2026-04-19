@@ -64,7 +64,7 @@ class Player(Actor):
         self.shoot_anim_timer = max(0.0, self.shoot_anim_timer - delta_time)
         self.muzzle_timer = max(0.0, self.muzzle_timer - delta_time)
 
-        mouse_pos = pygame.Vector2(pygame.mouse.get_pos())
+        mouse_pos = pygame.Vector2(getattr(scene, "mouse_pos", pygame.mouse.get_pos()))
         aim_vector = mouse_pos - self.pos
         self.aim_direction = safe_normalize(aim_vector)
         angle = -self.aim_direction.angle_to(pygame.Vector2(1, 0))

@@ -54,7 +54,7 @@ def draw_menu(surface, assets, buttons, mouse_pos, total_score, pulse):
         True,
         config.COLOR_SUBTEXT,
     )
-    hint = assets.font_body.render("WASD di chuyển, chuột để bắn", True, config.COLOR_SUBTEXT)
+    hint = assets.font_body.render("WASD di chuyển, chuột để bắn, F11 phóng to", True, config.COLOR_SUBTEXT)
     score_text = assets.font_small.render(f"Điểm cao: {total_score}", True, config.COLOR_ACCENT)
 
     surface.blit(shadow, (58, title_y + 6))
@@ -90,7 +90,7 @@ def draw_button(surface, assets, button, hovered):
     surface.blit(subtitle, (button.rect.x + 24, button.rect.y + 54))
 
 
-def draw_hud(surface, assets, scene, next_upgrade_text):
+def draw_hud(surface, assets, scene, next_upgrade_text, mouse_pos):
     """HUD tối giản.
 
     Chỉ giữ 4 nhóm thông tin:
@@ -146,7 +146,7 @@ def draw_hud(surface, assets, scene, next_upgrade_text):
     surface.blit(score, (708, 18))
 
     draw_minimap(surface, assets, scene, pygame.Rect(config.SCREEN_WIDTH - 136, 14, 118, 118))
-    draw_crosshair(surface, pygame.mouse.get_pos(), scene.player.fire_timer == 0)
+    draw_crosshair(surface, mouse_pos, scene.player.fire_timer == 0)
 
 
 def draw_health_bar(surface, assets, value, maximum, rect, label):

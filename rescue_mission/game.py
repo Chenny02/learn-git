@@ -183,7 +183,13 @@ class Game:
     def __init__(self):
         pygame.init()
         pygame.display.set_caption(config.TITLE)
-        self.screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
+        self.base_size = (config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
+        self.fullscreen = False
+        self.windowed_size = self.base_size
+        self.window_surface = None
+        self.present_rect = pygame.Rect(0, 0, *self.base_size)
+        self.configure_display()
+        self.screen = pygame.Surface(self.base_size).convert()
         self.clock = pygame.time.Clock()
 
         self.assets = AssetManager()
@@ -208,6 +214,7 @@ class Game:
         self.dialogue_footer = ""
         self.dialogue_subtitle = ""
         self.dialogue_next_action = ""
+        self.mouse_pos = (config.SCREEN_WIDTH // 2, config.SCREEN_HEIGHT // 2)
 
     def run(self):
         """Vòng lặp chính của game.
@@ -221,6 +228,7 @@ class Game:
         while self.running:
             self.clock.tick(config.FPS)
             self.menu_pulse += 1
+            self.mouse_pos = self.get_logical_mouse_position()
             self.handle_events()
             self.update()
             self.draw()
@@ -236,6 +244,25 @@ class Game:
                 self.running = False
                 return
 
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_F11:
+                self.toggle_fullscreen()
+                self.mouse_pos = self.get_logical_mouse_position()
+                continue
+
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN and (event.mod & pygame.KMOD_ALT):
+                self.toggle_fullscreen()
+                self.mouse_pos = self.get_logical_mouse_position()
+                continue
+
+            if event.type == pygame.VIDEORESIZE and not self.fullscreen:
+                self.windowed_size = (
+                    max(960, event.w),
+                    max(640, event.h),
+                )
+                self.configure_display()
+                self.mouse_pos = self.get_logical_mouse_position()
+                continue
+
             if self.state == GameState.MENU:
                 self.handle_menu_event(event)
             elif self.state == GameState.DIALOGUE:
@@ -249,7 +276,7 @@ class Game:
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
             return
 
-        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = self.mouse_pos
         if self.buttons[0].hovered(mouse_pos):
             self.start_new_campaign()
         elif self.buttons[1].hovered(mouse_pos):
@@ -323,7 +350,7 @@ class Game:
                 self.screen,
                 self.assets,
                 self.buttons,
-                pygame.mouse.get_pos(),
+                self.mouse_pos,
                 self.total_score,
                 self.menu_pulse,
             )
@@ -350,12 +377,16 @@ class Game:
                 )
 
         elif self.state == GameState.PLAYING:
+            if self.scene:
+                self.scene.mouse_pos = pygame.Vector2(self.mouse_pos)
             self.scene.draw(self.screen)
-            ui.draw_hud(self.screen, self.assets, self.scene, self.describe_next_upgrade())
+            ui.draw_hud(self.screen, self.assets, self.scene, self.describe_next_upgrade(), self.mouse_pos)
 
         elif self.state == GameState.LEVEL_COMPLETE:
+            if self.scene:
+                self.scene.mouse_pos = pygame.Vector2(self.mouse_pos)
             self.scene.draw(self.screen)
-            ui.draw_hud(self.screen, self.assets, self.scene, self.describe_next_upgrade())
+            ui.draw_hud(self.screen, self.assets, self.scene, self.describe_next_upgrade(), self.mouse_pos)
             ui.draw_overlay(
                 self.screen,
                 self.assets,
@@ -366,8 +397,10 @@ class Game:
             )
 
         elif self.state == GameState.GAME_OVER:
+            if self.scene:
+                self.scene.mouse_pos = pygame.Vector2(self.mouse_pos)
             self.scene.draw(self.screen)
-            ui.draw_hud(self.screen, self.assets, self.scene, self.describe_next_upgrade())
+            ui.draw_hud(self.screen, self.assets, self.scene, self.describe_next_upgrade(), self.mouse_pos)
             ui.draw_overlay(
                 self.screen,
                 self.assets,
@@ -378,8 +411,10 @@ class Game:
             )
 
         elif self.state == GameState.VICTORY:
+            if self.scene:
+                self.scene.mouse_pos = pygame.Vector2(self.mouse_pos)
             self.scene.draw(self.screen)
-            ui.draw_hud(self.screen, self.assets, self.scene, "Chiến dịch đã hoàn tất.")
+            ui.draw_hud(self.screen, self.assets, self.scene, "Chiến dịch đã hoàn tất.", self.mouse_pos)
             ui.draw_overlay(
                 self.screen,
                 self.assets,
@@ -389,7 +424,7 @@ class Game:
                 config.COLOR_WARNING,
             )
 
-        pygame.display.flip()
+        self.present_screen()
 
     def start_new_campaign(self):
         """Reset campaign và tạo scene cho màn đầu tiên."""
@@ -425,6 +460,46 @@ class Game:
         self.dialogue_footer = ""
         self.dialogue_subtitle = ""
         self.dialogue_next_action = ""
+
+    def configure_display(self):
+        """Tạo cửa sổ thật; phần render logic vẫn giữ ở độ phân giải cố định."""
+
+        if self.fullscreen:
+            self.window_surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        else:
+            self.window_surface = pygame.display.set_mode(self.windowed_size, pygame.RESIZABLE)
+        self.present_rect = self.calculate_present_rect(self.window_surface.get_size())
+
+    def toggle_fullscreen(self):
+        self.fullscreen = not self.fullscreen
+        self.configure_display()
+
+    def calculate_present_rect(self, window_size):
+        window_w, window_h = window_size
+        base_w, base_h = self.base_size
+        scale = min(window_w / base_w, window_h / base_h)
+        draw_w = max(1, int(base_w * scale))
+        draw_h = max(1, int(base_h * scale))
+        return pygame.Rect((window_w - draw_w) // 2, (window_h - draw_h) // 2, draw_w, draw_h)
+
+    def get_logical_mouse_position(self):
+        raw_x, raw_y = pygame.mouse.get_pos()
+        rect = self.present_rect
+        if rect.width <= 0 or rect.height <= 0:
+            return raw_x, raw_y
+
+        local_x = (raw_x - rect.x) / rect.width * self.base_size[0]
+        local_y = (raw_y - rect.y) / rect.height * self.base_size[1]
+        clamped_x = max(0, min(self.base_size[0] - 1, int(local_x)))
+        clamped_y = max(0, min(self.base_size[1] - 1, int(local_y)))
+        return clamped_x, clamped_y
+
+    def present_screen(self):
+        self.present_rect = self.calculate_present_rect(self.window_surface.get_size())
+        self.window_surface.fill((0, 0, 0))
+        scaled = pygame.transform.smoothscale(self.screen, self.present_rect.size)
+        self.window_surface.blit(scaled, self.present_rect.topleft)
+        pygame.display.flip()
 
     def open_dialogue(self, script_key, next_action, subtitle="", footer="Nhấn Enter để tiếp."):
         """Mở hội thoại nhiều trang và ghi nhớ hành động sau khi đọc xong."""
