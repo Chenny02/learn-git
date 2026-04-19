@@ -1,8 +1,10 @@
+from collections import Counter, deque
 from pathlib import Path
 
 import pygame
 
 from . import config
+from .core.sprite_sheet import SpriteSheet
 
 
 def _clamp_color(color):
@@ -83,11 +85,99 @@ def make_boss_surface(size):
     return surface
 
 
+def _border_points(width, height):
+    for x in range(width):
+        yield x, 0
+        if height > 1:
+            yield x, height - 1
+    for y in range(1, height - 1):
+        yield 0, y
+        if width > 1:
+            yield width - 1, y
+
+
+def cleanup_loose_frame_background(surface):
+    """Loại nền sáng/checkerboard dính trong PNG frame rời.
+
+    Nhiều asset export từ tool ảnh giữ nguyên nền preview trắng/xám thay vì alpha thật.
+    Ta chỉ xóa vùng nền nối từ mép ảnh để không ăn mất chi tiết sáng bên trong nhân vật.
+    """
+
+    width, height = surface.get_size()
+    if width <= 2 or height <= 2:
+        return surface
+
+    border_samples = [surface.get_at(point) for point in _border_points(width, height)]
+    if not border_samples or any(sample.a < 250 for sample in border_samples):
+        return surface
+
+    def quantize(color, step=16):
+        return tuple((channel // step) * step for channel in color[:3])
+
+    palette_counts = Counter(quantize(sample) for sample in border_samples)
+    palette = [color for color, _ in palette_counts.most_common(4)]
+    if not palette:
+        return surface
+
+    average_brightness = sum(max(sample.r, sample.g, sample.b) for sample in border_samples) / len(border_samples)
+    if average_brightness < 150:
+        return surface
+
+    def near_border_color(color):
+        rgb = color[:3]
+        return any(sum(abs(rgb[index] - bg[index]) for index in range(3)) <= 42 for bg in palette)
+
+    cleaned = surface.copy()
+    queue = deque()
+    visited = set()
+
+    for point in _border_points(width, height):
+        pixel = cleaned.get_at(point)
+        if pixel.a >= 250 and near_border_color(pixel):
+            queue.append(point)
+            visited.add(point)
+
+    removed = 0
+    while queue:
+        x, y = queue.popleft()
+        pixel = cleaned.get_at((x, y))
+        if pixel.a == 0 or not near_border_color(pixel):
+            continue
+
+        cleaned.set_at((x, y), (0, 0, 0, 0))
+        removed += 1
+
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in visited:
+                visited.add((nx, ny))
+                neighbor = cleaned.get_at((nx, ny))
+                if neighbor.a >= 250 and near_border_color(neighbor):
+                    queue.append((nx, ny))
+
+    if removed == 0:
+        return surface
+
+    bounds = cleaned.get_bounding_rect(min_alpha=1)
+    if bounds.width <= 0 or bounds.height <= 0:
+        return surface
+    return cleaned.subsurface(bounds).copy()
+
+
 class AssetManager:
-    """Quan ly asset theo huong fallback an toan khi thieu file PNG."""
+    """Quản lý asset của game.
+
+    Thứ tự ưu tiên:
+    1. `assets/animations/<entity>/<state>/*.png`
+    2. atlas cũ `character.png`, `boss.png`
+    3. sprite đơn lẻ / fallback vẽ bằng code
+
+    Mục tiêu là để pipeline làm ảnh đơn giản hơn: chỉ cần thả frame PNG vào đúng thư mục.
+    """
 
     def __init__(self):
         self.project_root = Path(config.PROJECT_ROOT)
+        self.animation_root = self.project_root / "assets" / "animations"
+
         self.font_title = pygame.font.SysFont("bahnschrift", 64, bold=True)
         self.font_h1 = pygame.font.SysFont("segoeui", 36, bold=True)
         self.font_h2 = pygame.font.SysFont("segoeui", 24, bold=True)
@@ -111,13 +201,57 @@ class AssetManager:
             config.COLOR_BORDER,
         )
 
+        self.animation_frames = {
+            "player": self.load_animation_folders(
+                "player",
+                {
+                    "idle": config.PLAYER_RENDER_SIZE,
+                    "run": config.PLAYER_RENDER_SIZE,
+                    "shoot": config.PLAYER_RENDER_SIZE,
+                },
+            ),
+            "boss": self.load_animation_folders(
+                "boss",
+                {
+                    "idle": config.BOSS_RENDER_SIZE,
+                    "move": config.BOSS_RENDER_SIZE,
+                    "attack1": config.BOSS_RENDER_SIZE,
+                    "attack2": config.BOSS_RENDER_SIZE,
+                    "attack3": config.BOSS_RENDER_SIZE,
+                    "death": (190, 160),
+                },
+            ),
+            "hostage": self.load_animation_folders(
+                "hostage",
+                {
+                    "idle": config.HOSTAGE_RENDER_SIZE,
+                    "walk": config.HOSTAGE_RENDER_SIZE,
+                    "rescued": config.HOSTAGE_RENDER_SIZE,
+                    "captured": config.HOSTAGE_RENDER_SIZE,
+                },
+            ),
+            "effects": self.load_animation_folders(
+                "effects",
+                {
+                    "bullet": (28, 28),
+                    "hit": config.EFFECT_RENDER_SIZE,
+                    "explosion": (72, 72),
+                },
+            ),
+        }
+
+        self.sprite_sheets = {
+            "character": self.load_sprite_sheet("character.png", config.CHARACTER_SHEET_COLUMNS, config.CHARACTER_SHEET_ROWS),
+            "boss": self.load_sprite_sheet("boss.png", config.BOSS_SHEET_COLUMNS, config.BOSS_SHEET_ROWS),
+        }
+
         self.images = {
-            "player": self.load_optional_image("player.png", (34, 34), alpha=True) or make_player_surface((34, 34)),
+            "player": self.load_first_available_image(("image.png", "player.png"), (34, 34), alpha=True) or make_player_surface((34, 34)),
             "hostage": self.load_optional_image("hostage.png", (26, 42), alpha=True) or make_hostage_surface((26, 42)),
             "enemy_grunt": self.load_optional_image("enemy.png", (30, 30), alpha=True) or make_enemy_surface((30, 30), (246, 87, 110), (255, 205, 214)),
             "enemy_runner": make_enemy_surface((26, 26), (255, 169, 55), (255, 228, 175)),
             "enemy_shooter": make_enemy_surface((32, 32), (134, 94, 255), (219, 208, 255)),
-            "boss": self.load_optional_image("boss.png", (96, 96), alpha=True) or make_boss_surface((96, 96)),
+            "boss": make_boss_surface((96, 96)),
             "world_bg": self.load_optional_image("bg.png", (config.SCREEN_WIDTH, config.SCREEN_HEIGHT), alpha=False),
         }
 
@@ -128,4 +262,51 @@ class AssetManager:
 
         image = pygame.image.load(str(path))
         image = image.convert_alpha() if alpha else image.convert()
+        if alpha:
+            image = cleanup_loose_frame_background(image)
         return pygame.transform.smoothscale(image, size)
+
+    def load_sprite_sheet(self, filename, columns, rows):
+        path = self.project_root / filename
+        if not path.exists():
+            return None
+        return SpriteSheet(path, columns, rows)
+
+    def load_first_available_image(self, filenames, size, alpha=True):
+        for filename in filenames:
+            image = self.load_optional_image(filename, size, alpha=alpha)
+            if image is not None:
+                return image
+        return None
+
+    def load_animation_folders(self, entity_name, state_sizes):
+        """Load frame rời từ thư mục.
+
+        Cấu trúc:
+        `assets/animations/<entity>/<state>/*.png`
+
+        Ví dụ:
+        `assets/animations/player/idle/idle_01.png`
+        """
+
+        entity_root = self.animation_root / entity_name
+        loaded = {}
+        if not entity_root.exists():
+            return loaded
+
+        for state_name, size in state_sizes.items():
+            state_dir = entity_root / state_name
+            if not state_dir.exists():
+                continue
+
+            frames = []
+            for image_path in sorted(state_dir.glob("*.png")):
+                image = pygame.image.load(str(image_path)).convert_alpha()
+                image = cleanup_loose_frame_background(image)
+                image = pygame.transform.smoothscale(image, size)
+                frames.append(image)
+
+            if frames:
+                loaded[state_name] = frames
+
+        return loaded

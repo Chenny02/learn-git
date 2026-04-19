@@ -41,17 +41,29 @@ def draw_menu(surface, assets, buttons, mouse_pos, total_score, pulse):
     surface.blit(assets.menu_background, (0, 0))
 
     title_y = 108 + int(math.sin(pulse / 18) * 4)
-    shadow = assets.font_title.render("Giải Cứu Con Tin", True, config.COLOR_SHADOW)
-    title = assets.font_title.render("Giải Cứu Con Tin", True, config.COLOR_TEXT)
-    subtitle = assets.font_body.render("Shadow Protocol", True, config.COLOR_SUBTEXT)
+    shadow = assets.font_title.render(config.GAME_TITLE_MAIN, True, config.COLOR_SHADOW)
+    title = assets.font_title.render(config.GAME_TITLE_MAIN, True, config.COLOR_TEXT)
+    subtitle = assets.font_body.render(config.GAME_TITLE_SUBTITLE, True, config.COLOR_SUBTEXT)
+    story_1 = assets.font_body.render(
+        f"{config.PLAYER_NAME} tiến vào lâu đài để giải cứu công chúa {config.HOSTAGE_NAME}.",
+        True,
+        config.COLOR_SUBTEXT,
+    )
+    story_2 = assets.font_body.render(
+        f"{config.BOSS_NAME} đang điều khiển bóng tối và toàn bộ quái vật.",
+        True,
+        config.COLOR_SUBTEXT,
+    )
     hint = assets.font_body.render("WASD di chuyển, chuột để bắn", True, config.COLOR_SUBTEXT)
     score_text = assets.font_small.render(f"Điểm cao: {total_score}", True, config.COLOR_ACCENT)
 
     surface.blit(shadow, (58, title_y + 6))
     surface.blit(title, (52, title_y))
     surface.blit(subtitle, (56, title_y + 74))
-    surface.blit(hint, (56, title_y + 118))
-    surface.blit(score_text, (56, title_y + 148))
+    surface.blit(story_1, (56, title_y + 112))
+    surface.blit(story_2, (56, title_y + 140))
+    surface.blit(hint, (56, title_y + 168))
+    surface.blit(score_text, (56, title_y + 198))
 
     for button in buttons:
         draw_button(surface, assets, button, button.hovered(mouse_pos))
@@ -93,15 +105,17 @@ def draw_hud(surface, assets, scene, next_upgrade_text):
 
     del next_upgrade_text
 
-    header = pygame.Rect(18, 14, 760, 58)
+    header = pygame.Rect(18, 14, 760, 82)
     draw_glass_panel(surface, header)
 
     stage_text = assets.font_h2.render(f"Màn {scene.level_spec.number}", True, config.COLOR_TEXT)
     stage_name = assets.font_small.render(scene.level_spec.title, True, config.COLOR_SUBTEXT)
+    briefing = assets.font_small.render(scene.level_spec.description, True, config.COLOR_SUBTEXT)
     surface.blit(stage_text, (32, 18))
     surface.blit(stage_name, (118, 24))
+    surface.blit(briefing, (32, 50))
 
-    draw_health_bar(surface, assets, scene.player.health, scene.player.max_health, pygame.Rect(248, 22, 170, 14), "Máu")
+    draw_health_bar(surface, assets, scene.player.health, scene.player.max_health, pygame.Rect(248, 22, 170, 14), config.PLAYER_NAME)
     draw_timer_bar(
         surface,
         assets,
@@ -110,13 +124,23 @@ def draw_hud(surface, assets, scene, next_upgrade_text):
         max(0, scene.time_left // config.FPS),
     )
 
-    objective = "Cứu con tin" if not scene.hostage.rescued else "An toàn"
-    objective_color = config.COLOR_WARNING if not scene.hostage.rescued else config.COLOR_ACCENT
+    if scene.boss and scene.boss.health > 0 and not scene.hostage.rescued:
+        objective = f"Cứu {config.HOSTAGE_NAME} + hạ {config.BOSS_NAME}"
+        objective_color = config.COLOR_WARNING
+    elif scene.boss and scene.boss.health > 0:
+        objective = f"Hạ {config.BOSS_NAME}"
+        objective_color = config.COLOR_DANGER
+    elif not scene.hostage.rescued:
+        objective = f"Cứu {config.HOSTAGE_NAME}"
+        objective_color = config.COLOR_WARNING
+    else:
+        objective = f"{config.HOSTAGE_NAME} an toàn"
+        objective_color = config.COLOR_ACCENT
     objective_text = assets.font_small.render(objective, True, objective_color)
     surface.blit(objective_text, (452, 24))
 
     if scene.boss and scene.boss.health > 0:
-        draw_health_bar(surface, assets, scene.boss.health, scene.boss.max_health, pygame.Rect(540, 24, 150, 12), "Boss")
+        draw_health_bar(surface, assets, scene.boss.health, scene.boss.max_health, pygame.Rect(540, 24, 150, 12), config.BOSS_NAME)
 
     score = assets.font_h2.render(f"Điểm {scene.score}", True, config.COLOR_TEXT)
     surface.blit(score, (708, 18))
@@ -233,3 +257,69 @@ def draw_overlay(surface, assets, title, subtitle, footer, accent_color):
     surface.blit(title_surf, (card.centerx - title_surf.get_width() // 2, card.y + 24))
     surface.blit(subtitle_surf, (card.centerx - subtitle_surf.get_width() // 2, card.y + 92))
     surface.blit(footer_surf, (card.centerx - footer_surf.get_width() // 2, card.y + 132))
+
+
+def wrap_text(font, text, max_width):
+    """Tách text dài thành nhiều dòng để card hội thoại không bị tràn ngang."""
+
+    lines = []
+    for paragraph in text.splitlines() or [""]:
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+
+        current_line = words[0]
+        for word in words[1:]:
+            candidate = f"{current_line} {word}"
+            if font.size(candidate)[0] <= max_width:
+                current_line = candidate
+            else:
+                lines.append(current_line)
+                current_line = word
+        lines.append(current_line)
+    return lines
+
+
+def draw_dialogue(surface, assets, title, speaker, text, accent_color, page_index, page_total, footer, subtitle=""):
+    """Card hội thoại nhiều trang cho intro, giữa màn và kết thúc."""
+
+    veil = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.SRCALPHA)
+    veil.fill((4, 8, 18, 192))
+    surface.blit(veil, (0, 0))
+
+    card = pygame.Rect(config.SCREEN_WIDTH // 2 - 430, config.SCREEN_HEIGHT // 2 - 146, 860, 292)
+    draw_glass_panel(surface, card)
+    pygame.draw.rect(surface, accent_color, card.inflate(-16, -16), width=2, border_radius=20)
+
+    title_surf = assets.font_h1.render(title, True, config.COLOR_TEXT)
+    surface.blit(title_surf, (card.x + 28, card.y + 24))
+
+    if subtitle:
+        subtitle_surf = assets.font_small.render(subtitle, True, config.COLOR_SUBTEXT)
+        surface.blit(subtitle_surf, (card.x + 30, card.y + 66))
+
+    page_surf = assets.font_small.render(f"{page_index}/{page_total}", True, config.COLOR_SUBTEXT)
+    surface.blit(page_surf, (card.right - page_surf.get_width() - 28, card.y + 28))
+
+    speaker_tag = pygame.Rect(card.x + 30, card.y + 104, 180, 34)
+    pygame.draw.rect(surface, (*accent_color, 55), speaker_tag, border_radius=16)
+    pygame.draw.rect(surface, accent_color, speaker_tag, width=1, border_radius=16)
+    speaker_surf = assets.font_h2.render(speaker, True, config.COLOR_TEXT)
+    surface.blit(
+        speaker_surf,
+        (
+            speaker_tag.centerx - speaker_surf.get_width() // 2,
+            speaker_tag.centery - speaker_surf.get_height() // 2 - 1,
+        ),
+    )
+
+    text_lines = wrap_text(assets.font_body, text, card.width - 60)
+    text_y = card.y + 154
+    for line in text_lines:
+        line_surf = assets.font_body.render(line, True, config.COLOR_TEXT)
+        surface.blit(line_surf, (card.x + 30, text_y))
+        text_y += 28
+
+    footer_surf = assets.font_small.render(footer, True, accent_color)
+    surface.blit(footer_surf, (card.x + 30, card.bottom - 34))

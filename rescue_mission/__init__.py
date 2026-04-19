@@ -1,4 +1,4 @@
-"""Rescue Mission: Shadow Protocol package."""
+"""Rescue Mission: Shadow Kingdom package."""
 
 import sys
 

@@ -16,8 +16,12 @@ from typing import Dict, Tuple
 import pygame
 
 from . import config
-from .entities import Boss, Bullet, ENEMY_TYPES, Enemy, Hostage, Player
+from .entities import Bullet, ENEMY_TYPES, Enemy
 from .pathfinding import AStarPathfinder
+from .sprites.boss import Boss
+from .sprites.effects import Effect, build_effect_animations
+from .sprites.hostage import Hostage
+from .sprites.player import Player
 
 
 @dataclass(frozen=True)
@@ -47,8 +51,8 @@ def build_level_specs():
     return [
         LevelSpec(
             number=1,
-            title="Bến Cảng",
-            description="Mở đường và cứu con tin.",
+            title="Tiến vào lâu đài",
+            description=f"{config.PLAYER_NAME} xâm nhập Shadow Kingdom để tìm {config.HOSTAGE_NAME}.",
             use_maze=False,
             has_boss=False,
             hostage_required=True,
@@ -59,8 +63,8 @@ def build_level_specs():
         ),
         LevelSpec(
             number=2,
-            title="Kho Dữ Liệu",
-            description="Địch bắn xa xuất hiện.",
+            title="Cuộc săn đuổi",
+            description=f"Quân của {config.BOSS_NAME} truy đuổi {config.PLAYER_NAME} khắp lâu đài.",
             use_maze=False,
             has_boss=False,
             hostage_required=True,
@@ -71,8 +75,8 @@ def build_level_specs():
         ),
         LevelSpec(
             number=3,
-            title="Mê Cung",
-            description="Địch truy đuổi trong hành lang hẹp.",
+            title="Mê cung bóng tối",
+            description=f"{config.PLAYER_NAME} lần theo dấu vết của {config.HOSTAGE_NAME} trong mê cung DFS.",
             use_maze=True,
             has_boss=False,
             hostage_required=True,
@@ -83,8 +87,8 @@ def build_level_specs():
         ),
         LevelSpec(
             number=4,
-            title="Orion",
-            description="Cứu con tin và hạ boss.",
+            title="Trận chiến cuối",
+            description=f"Đối đầu {config.BOSS_NAME}, cứu {config.HOSTAGE_NAME} và kết thúc bóng tối.",
             use_maze=False,
             has_boss=True,
             hostage_required=True,
@@ -251,6 +255,7 @@ class LevelScene:
         self.hit_effects = []
         self.path_cache = {}
         self.cached_goal = None
+        self.effect_animations = build_effect_animations(assets)
 
         self.maze = Maze(self.world_rect) if level_spec.use_maze else None
         player_stats = config.player_stats_for_level(level_spec.number)
@@ -267,12 +272,13 @@ class LevelScene:
         self.enemies = pygame.sprite.Group()
         self.player_bullets = pygame.sprite.Group()
         self.enemy_bullets = pygame.sprite.Group()
+        self.effects = pygame.sprite.Group()
         self.boss = Boss((self.world_rect.centerx, self.world_rect.top + 120), assets) if level_spec.has_boss else None
         self.spawn_timer = random.randint(*level_spec.spawn_range)
         self.time_left = level_spec.time_limit * config.FPS
         self.objective_flash = 0
 
-    def update(self):
+    def update(self, delta_time):
         """Một frame gameplay.
 
         Trật tự ở đây quan trọng:
@@ -293,15 +299,16 @@ class LevelScene:
         self.screen_shake = max(0, self.screen_shake - 1)
         self.update_effects()
 
-        self.player.update(self)
-        self.hostage.update(self)
+        self.player.update(self, delta_time)
+        self.hostage.update(self, delta_time)
         self.player_bullets.update(self)
         self.enemy_bullets.update(self)
+        self.effects.update(delta_time)
 
         for enemy in list(self.enemies):
             enemy.update(self)
-        if self.boss and self.boss.health > 0:
-            self.boss.update(self)
+        if self.boss:
+            self.boss.update(self, delta_time)
 
         self.handle_spawning()
         self.handle_collisions()
@@ -367,42 +374,42 @@ class LevelScene:
             enemy = pygame.sprite.spritecollideany(bullet, self.enemies)
             if enemy:
                 bullet.kill()
-                self.add_burst(bullet.pos, (200, 240, 255), 7)
+                self.add_effect("hit", bullet.pos)
                 if enemy.take_damage(bullet.damage):
                     self.score += enemy.score_value
-                    self.add_burst(enemy.pos, config.COLOR_ACCENT, 10)
+                    self.add_effect("explosion", enemy.pos)
                     enemy.kill()
                 continue
 
             if self.boss and self.boss.health > 0 and self.boss.rect.colliderect(bullet.rect):
                 bullet.kill()
-                self.add_burst(bullet.pos, (255, 208, 145), 8)
+                self.add_effect("hit", bullet.pos)
                 if self.boss.take_damage(bullet.damage):
-                    self.add_burst(self.boss.pos, config.COLOR_WARNING, 18)
+                    self.add_effect("explosion", self.boss.pos)
 
         for bullet in list(self.enemy_bullets):
             if self.player.rect.colliderect(bullet.rect):
                 bullet.kill()
                 if self.player.take_damage(bullet.damage):
-                    self.add_burst(self.player.pos, config.COLOR_DANGER, 8)
+                    self.add_effect("hit", self.player.pos)
                     self.screen_shake = 7
 
         for enemy in list(self.enemies):
             if self.player.rect.colliderect(enemy.rect):
                 if self.player.take_damage(enemy.contact_damage):
-                    self.add_burst(self.player.pos, config.COLOR_DANGER, 12)
+                    self.add_effect("hit", self.player.pos)
                     self.screen_shake = 10
                 enemy.kill()
 
         if self.boss and self.boss.health > 0 and self.player.rect.colliderect(self.boss.rect):
             if self.player.take_damage(22):
-                self.add_burst(self.player.pos, config.COLOR_DANGER, 14)
+                self.add_effect("hit", self.player.pos)
                 self.screen_shake = 12
 
         if self.level_spec.hostage_required and not self.hostage.rescued and self.player.rect.colliderect(self.hostage.rect):
             self.hostage.rescued = True
             self.score += 200
-            self.add_burst(self.hostage.pos, config.COLOR_WARNING, 12)
+            self.add_effect("explosion", self.hostage.pos)
 
     def check_objectives(self):
         """Dieu kien thang duoc gom vao 1 cho de de doc va de doi luat choi."""
@@ -413,10 +420,10 @@ class LevelScene:
         if self.level_spec.has_boss:
             if boss_dead and hostage_ready:
                 self.result = "win"
-                self.result_reason = "Boss đã bị tiêu diệt và con tin đã an toàn."
+                self.result_reason = f"{config.BOSS_NAME} đã bị tiêu diệt và {config.HOSTAGE_NAME} đã an toàn."
         elif hostage_ready:
             self.result = "win"
-            self.result_reason = "Con tin đã được giải cứu."
+            self.result_reason = f"{config.HOSTAGE_NAME} đã được {config.PLAYER_NAME} giải cứu."
 
     def fail_level(self, reason):
         self.result = "lose"
@@ -461,7 +468,7 @@ class LevelScene:
             self.player_bullets.add(bullet)
         else:
             self.enemy_bullets.add(bullet)
-        self.add_burst(origin, color, 4)
+        self.add_effect("bullet", origin, angle=-pygame.Vector2(direction).angle_to(pygame.Vector2(1, 0)))
 
     def add_burst(self, position, color, radius):
         """Luu hieu ung hit feedback o dang du lieu nhe thay vi sprite rieng."""
@@ -474,6 +481,14 @@ class LevelScene:
                 "life": 10,
             }
         )
+
+    def add_effect(self, name, position, angle=0.0):
+        """Thêm effect animation, tự fallback nếu sheet chưa đúng layout."""
+
+        if name not in self.effect_animations:
+            return
+        effect = Effect(position, self.effect_animations, name, angle=angle)
+        self.effects.add(effect)
 
     def draw(self, surface):
         """Vẽ scene.
@@ -501,19 +516,45 @@ class LevelScene:
 
         self.draw_objective_line(world_layer)
         world_layer.blit(self.hostage.image, self.hostage.rect)
+        self.draw_entity_label(
+            world_layer,
+            self.hostage.rect,
+            config.HOSTAGE_NAME,
+            config.COLOR_WARNING if not self.hostage.rescued else config.COLOR_ACCENT,
+        )
         for bullet in self.player_bullets:
             world_layer.blit(bullet.image, bullet.rect)
         for bullet in self.enemy_bullets:
             world_layer.blit(bullet.image, bullet.rect)
+        for effect in self.effects:
+            world_layer.blit(effect.image, effect.rect)
         for enemy in self.enemies:
             world_layer.blit(enemy.image, enemy.rect)
-        if self.boss and self.boss.health > 0:
+        if self.boss:
             world_layer.blit(self.boss.image, self.boss.rect)
+            if self.boss.health > 0:
+                self.draw_entity_label(world_layer, self.boss.rect, config.BOSS_NAME, (194, 63, 255))
         world_layer.blit(self.player.image, self.player.rect)
+        self.draw_entity_label(world_layer, self.player.rect, config.PLAYER_NAME, (88, 197, 255))
         self.draw_effects(world_layer)
         self.draw_muzzle_flash(world_layer)
 
         surface.blit(world_layer, (int(offset.x), int(offset.y)))
+
+    def draw_entity_label(self, surface, rect, name, color):
+        """Vẽ tên nhân vật ngay trên sprite để người chơi nhận ra nhanh."""
+
+        label = self.assets.font_small.render(name, True, config.COLOR_TEXT)
+        padding_x = 10
+        panel = pygame.Rect(
+            rect.centerx - (label.get_width() + padding_x * 2) // 2,
+            rect.y - 24,
+            label.get_width() + padding_x * 2,
+            18,
+        )
+        pygame.draw.rect(surface, (5, 10, 20, 190), panel, border_radius=9)
+        pygame.draw.rect(surface, color, panel, width=1, border_radius=9)
+        surface.blit(label, (panel.x + padding_x, panel.y + 1))
 
     def draw_effects(self, surface):
         for effect in self.hit_effects:
