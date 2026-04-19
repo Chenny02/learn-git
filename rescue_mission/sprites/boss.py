@@ -40,6 +40,7 @@ class Boss(Actor):
         self.max_health = config.BOSS_HEALTH
         self.health = self.max_health
         self.phase = 1
+        self.set_hitbox(76, 76)
 
         self.primary_timer = 0.7
         self.secondary_timer = 2.0

@@ -27,6 +27,7 @@ class Player(Actor):
         self.max_health = stats.max_health
         self.health = stats.max_health
         self.radius = 16
+        self.set_hitbox(16, 16)
         self.fire_interval = stats.fire_interval
         self.fire_timer = 0
         self.invulnerable_timer = 0
@@ -108,7 +109,7 @@ class Player(Actor):
         self.pos.y = max(world_rect.top + radius, min(world_rect.bottom - radius, self.pos.y))
 
     def rect_for_position(self, position):
-        return pygame.Rect(0, 0, 16, 16).move(round(position.x) - 8, round(position.y) - 8)
+        return self.collision_rect(position)
 
     def fire(self, scene):
         muzzle_pos = self.pos + self.aim_direction * 22

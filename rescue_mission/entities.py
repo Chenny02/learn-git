@@ -107,6 +107,7 @@ class Actor(pygame.sprite.Sprite):
         self.base_image = pygame.Surface((8, 8), pygame.SRCALPHA)
         self.image = self.base_image.copy()
         self.rect = self.image.get_rect(center=(round(self.pos.x), round(self.pos.y)))
+        self.hitbox_size = pygame.Vector2(16, 16)
         self.flash_timer = 0
         self.flash_color = (255, 255, 255)
 
@@ -134,6 +135,21 @@ class Actor(pygame.sprite.Sprite):
     def flash(self, frames=5, color=(255, 255, 255)):
         self.flash_timer = max(self.flash_timer, frames)
         self.flash_color = color
+
+    def set_hitbox(self, width, height=None):
+        height = width if height is None else height
+        self.hitbox_size = pygame.Vector2(width, height)
+
+    def collision_rect(self, position=None):
+        pos = pygame.Vector2(position) if position is not None else self.pos
+        width = max(1, int(round(self.hitbox_size.x)))
+        height = max(1, int(round(self.hitbox_size.y)))
+        return pygame.Rect(
+            round(pos.x - width / 2),
+            round(pos.y - height / 2),
+            width,
+            height,
+        )
 
 
 class Bullet(pygame.sprite.Sprite):
@@ -313,6 +329,7 @@ class Enemy(Actor):
         self.path_timer = random.randint(8, 18)
         self.path = []
         self.strafe_dir = random.choice([-1, 1])
+        self.set_hitbox(16 if enemy_type.key != "shooter" else 18)
         self.set_base_image(assets.images[enemy_type.sprite_key])
 
     def update(self, scene):
@@ -382,9 +399,7 @@ class Enemy(Actor):
         self.pos.y = max(scene.world_rect.top + radius, min(scene.world_rect.bottom - radius, self.pos.y))
 
     def collision_rect(self):
-        size = 16 if self.enemy_type.key != "shooter" else 18
-        half = size // 2
-        return pygame.Rect(0, 0, size, size).move(round(self.pos.x) - half, round(self.pos.y) - half)
+        return super().collision_rect()
 
     def fire(self, scene):
         """Shooter bắn thông qua scene để đạn vào đúng nhóm enemy_bullets."""

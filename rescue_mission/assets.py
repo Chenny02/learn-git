@@ -154,13 +154,106 @@ def cleanup_loose_frame_background(surface):
                 if neighbor.a >= 250 and near_border_color(neighbor):
                     queue.append((nx, ny))
 
-    if removed == 0:
+    # Một số ảnh export để lại vài pixel trắng lẻ ở đúng mép ảnh.
+    # Xoá nốt những điểm này để bounding box không bị kéo full canvas.
+    changed = True
+    while changed:
+        changed = False
+        for point in list(_border_points(width, height)):
+            pixel = cleaned.get_at(point)
+            if pixel.a >= 250 and near_border_color(pixel):
+                cleaned.set_at(point, (0, 0, 0, 0))
+                changed = True
+
+    if removed == 0 and not changed:
         return surface
 
     bounds = cleaned.get_bounding_rect(min_alpha=1)
     if bounds.width <= 0 or bounds.height <= 0:
         return surface
     return cleaned.subsurface(bounds).copy()
+
+
+def trim_frame_surface(surface, pad=6):
+    """Trim alpha thật để sprite không bị bé do viền trống quá lớn."""
+
+    bounds = surface.get_bounding_rect(min_alpha=1)
+    if bounds.width <= 0 or bounds.height <= 0:
+        return surface
+
+    width, height = surface.get_size()
+    has_transparent_corners = any(
+        surface.get_at(point).a == 0
+        for point in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1))
+    )
+
+    # Một số PNG có alpha đúng ở viền ngoài nhưng vẫn còn bóng đen rất lớn bên trong.
+    # Khi đó bounding rect theo alpha sẽ giữ gần như cả canvas và làm sprite bị bé.
+    if has_transparent_corners and (bounds.width >= width * 0.9 or bounds.height >= height * 0.9):
+        visible = _find_visible_bounds(surface, min_alpha=16, min_brightness=28)
+        if visible is not None:
+            bounds = visible
+
+    if pad:
+        bounds.inflate_ip(pad * 2, pad * 2)
+        bounds = bounds.clip(surface.get_rect())
+    return surface.subsurface(bounds).copy()
+
+
+def _find_visible_bounds(surface, min_alpha=16, min_brightness=28):
+    """Tìm bounds của phần sprite thực sự nhìn thấy được.
+
+    Bỏ qua bóng rất tối hoặc rác alpha yếu để khung cắt sát nhân vật hơn.
+    """
+
+    width, height = surface.get_size()
+    min_x, min_y = width, height
+    max_x, max_y = -1, -1
+
+    for y in range(height):
+        for x in range(width):
+            r, g, b, a = surface.get_at((x, y))
+            if a < min_alpha or max(r, g, b) < min_brightness:
+                continue
+            if x < min_x:
+                min_x = x
+            if y < min_y:
+                min_y = y
+            if x > max_x:
+                max_x = x
+            if y > max_y:
+                max_y = y
+
+    if max_x < min_x or max_y < min_y:
+        return None
+    return pygame.Rect(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+
+
+def fit_surface_to_canvas(surface, canvas_size):
+    """Scale giữ nguyên tỉ lệ rồi đặt vào canvas trong suốt.
+
+    Tránh kéo méo ảnh khi nguồn có tỉ lệ khác canvas đích.
+    """
+
+    target_w, target_h = canvas_size
+    if target_w <= 0 or target_h <= 0:
+        return surface.copy()
+
+    source_w, source_h = surface.get_size()
+    if source_w <= 0 or source_h <= 0:
+        return pygame.Surface(canvas_size, pygame.SRCALPHA)
+
+    scale = min(target_w / source_w, target_h / source_h)
+    scaled_size = (
+        max(1, round(source_w * scale)),
+        max(1, round(source_h * scale)),
+    )
+    scaled = pygame.transform.smoothscale(surface, scaled_size)
+
+    canvas = pygame.Surface(canvas_size, pygame.SRCALPHA)
+    rect = scaled.get_rect(center=(target_w // 2, target_h // 2))
+    canvas.blit(scaled, rect)
+    return canvas
 
 
 class AssetManager:
@@ -264,6 +357,8 @@ class AssetManager:
         image = image.convert_alpha() if alpha else image.convert()
         if alpha:
             image = cleanup_loose_frame_background(image)
+            image = trim_frame_surface(image)
+            return fit_surface_to_canvas(image, size)
         return pygame.transform.smoothscale(image, size)
 
     def load_sprite_sheet(self, filename, columns, rows):
@@ -303,7 +398,8 @@ class AssetManager:
             for image_path in sorted(state_dir.glob("*.png")):
                 image = pygame.image.load(str(image_path)).convert_alpha()
                 image = cleanup_loose_frame_background(image)
-                image = pygame.transform.smoothscale(image, size)
+                image = trim_frame_surface(image)
+                image = fit_surface_to_canvas(image, size)
                 frames.append(image)
 
             if frames:

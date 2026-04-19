@@ -370,8 +370,15 @@ class LevelScene:
     def handle_collisions(self):
         """Tách collision theo nhóm để sau này dễ mở rộng hệ thống damage."""
 
+        player_hitbox = self.player.collision_rect()
+        hostage_hitbox = self.hostage.collision_rect()
+        boss_hitbox = self.boss.collision_rect() if self.boss and self.boss.health > 0 else None
+
         for bullet in list(self.player_bullets):
-            enemy = pygame.sprite.spritecollideany(bullet, self.enemies)
+            enemy = next(
+                (candidate for candidate in self.enemies if candidate.collision_rect().colliderect(bullet.rect)),
+                None,
+            )
             if enemy:
                 bullet.kill()
                 self.add_effect("hit", bullet.pos)
@@ -381,32 +388,33 @@ class LevelScene:
                     enemy.kill()
                 continue
 
-            if self.boss and self.boss.health > 0 and self.boss.rect.colliderect(bullet.rect):
+            if boss_hitbox and boss_hitbox.colliderect(bullet.rect):
                 bullet.kill()
                 self.add_effect("hit", bullet.pos)
                 if self.boss.take_damage(bullet.damage):
                     self.add_effect("explosion", self.boss.pos)
+                    boss_hitbox = None
 
         for bullet in list(self.enemy_bullets):
-            if self.player.rect.colliderect(bullet.rect):
+            if player_hitbox.colliderect(bullet.rect):
                 bullet.kill()
                 if self.player.take_damage(bullet.damage):
                     self.add_effect("hit", self.player.pos)
                     self.screen_shake = 7
 
         for enemy in list(self.enemies):
-            if self.player.rect.colliderect(enemy.rect):
+            if player_hitbox.colliderect(enemy.collision_rect()):
                 if self.player.take_damage(enemy.contact_damage):
                     self.add_effect("hit", self.player.pos)
                     self.screen_shake = 10
                 enemy.kill()
 
-        if self.boss and self.boss.health > 0 and self.player.rect.colliderect(self.boss.rect):
+        if boss_hitbox and player_hitbox.colliderect(boss_hitbox):
             if self.player.take_damage(22):
                 self.add_effect("hit", self.player.pos)
                 self.screen_shake = 12
 
-        if self.level_spec.hostage_required and not self.hostage.rescued and self.player.rect.colliderect(self.hostage.rect):
+        if self.level_spec.hostage_required and not self.hostage.rescued and player_hitbox.colliderect(hostage_hitbox):
             self.hostage.rescued = True
             self.score += 200
             self.add_effect("explosion", self.hostage.pos)

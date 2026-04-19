@@ -25,6 +25,7 @@ class Hostage(Actor):
     def __init__(self, pos, assets):
         super().__init__(pos)
         self.rescued = False
+        self.set_hitbox(18, 22)
         self.follow_offset = pygame.Vector2(-32, 26)
         self.pulse = 0.0
 
